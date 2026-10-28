@@ -10,4 +10,9 @@ data class TestState(
     val carriedStrategies: List<StrategyResult> = emptyList(),
     val failed: Boolean = false,
     val wasInterrupted: Boolean = false,
+    val isGenetic: Boolean = false,
+    val generation: Int = 0,
+    val generationSize: Int = 0,
+    val geneticDeadline: Long = 0L,
+    val bestStrategies: List<StrategyResult> = emptyList(),
 )

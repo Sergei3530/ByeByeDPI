@@ -26,6 +26,14 @@ class ProxyTestSettingsFragment : PreferenceFragmentCompat() {
         setEditTestPreferenceListenerInt("byedpi_proxytest_timeout", 1, 15)
         setEditTestPreferenceListenerInt("byedpi_proxytest_limit", 1, 50)
 
+        setEditTestPreferenceListenerInt("byedpi_proxytest_gen_n", 1, 500)
+        setEditTestPreferenceListenerInt("byedpi_proxytest_gen_m", 0, 500)
+        setEditTestPreferenceListenerInt("byedpi_proxytest_gen_d", 0, 500)
+        setEditTestPreferenceListenerInt("byedpi_proxytest_gen_r", 0, 500)
+        setEditTestPreferenceListenerInt("byedpi_proxytest_gen_minutes", 0, 525600)
+        setEditTestPreferenceListenerInt("byedpi_proxytest_gen_stop_k", 1, 10000)
+        setEditTestPreferenceListenerInt("byedpi_proxytest_gen_best_k", 1, 10000)
+
         setEditTestPreferenceListenerDomain("byedpi_proxytest_sni")
 
         updatePreferences()
@@ -55,7 +63,34 @@ class ProxyTestSettingsFragment : PreferenceFragmentCompat() {
         }
 
         textUserCommands.isEnabled = switchUserCommands.isChecked
+
+        val switchGenetic = findPreferenceNotNull<SwitchPreference>("byedpi_proxytest_genetic")
+        val geneticEnabled = switchGenetic.isChecked
+        val n = geneticValue("byedpi_proxytest_gen_n", 5)
+        val m = geneticValue("byedpi_proxytest_gen_m", 3)
+        val d = geneticValue("byedpi_proxytest_gen_d", 1)
+        val r = geneticValue("byedpi_proxytest_gen_r", 2)
+
+        geneticKeys.forEach { key ->
+            findPreference<Preference>(key)?.isVisible = geneticEnabled
+        }
+        findPreferenceNotNull<Preference>("byedpi_proxytest_gen_size").summary =
+            getString(R.string.test_genetic_size_summary, n * (1 + m + d + r))
     }
+
+    private fun geneticValue(key: String, defaultValue: Int): Int =
+        (findPreference<EditTextPreference>(key)?.text?.toIntOrNull() ?: defaultValue).coerceAtLeast(0)
+
+    private val geneticKeys = listOf(
+        "byedpi_proxytest_gen_n",
+        "byedpi_proxytest_gen_m",
+        "byedpi_proxytest_gen_d",
+        "byedpi_proxytest_gen_r",
+        "byedpi_proxytest_gen_minutes",
+        "byedpi_proxytest_gen_stop_k",
+        "byedpi_proxytest_gen_best_k",
+        "byedpi_proxytest_gen_size",
+    )
 
     private fun setupNumberSummary(key: String, descriptionResId: Int) {
         val pref = findPreference<EditTextPreference>(key) ?: return

@@ -244,4 +244,19 @@
     <string name="file_picker_unavailable">Құрылғыда жүйелік файл таңдау құралы жоқ. Жалғастыру үшін қолданбаға файлдарға рұқсат беріңіз.</string>
     <string name="grant_access">Рұқсат беру</string>
     <string name="storage_access_not_granted">Файлдарға рұқсат берілмеді</string>
+    <string name="test_genetic_start">Іріктеуді бастау</string>
+    <string name="test_genetic_settings">Генетикалық алгоритм негізінде тестілеу</string>
+    <string name="test_genetic_n">Бір ұрпақтағы ең жақсы стратегиялар (n)</string>
+    <string name="test_genetic_m">Әр ата-анаға параметр қосу (m)</string>
+    <string name="test_genetic_d">Әр ата-анадан параметр жою (d)</string>
+    <string name="test_genetic_r">Әр ата-анадағы параметрді өзгерту (r)</string>
+    <string name="test_genetic_minutes">Уақыт шегі, минут</string>
+    <string name="test_genetic_stop_k">Тоқтату: 100% стратегия саны (K)</string>
+    <string name="test_genetic_best_k">Барлық уақыттағы ең жақсылар (K)</string>
+    <string name="test_genetic_size">Ұрпақтағы стратегия саны</string>
+    <string name="test_genetic_size_summary">%1$d — n × (1 + m + d + r)</string>
+    <string name="test_process_genetic">Ұрпақ %1$d · %2$d/%3$d</string>
+    <string name="test_genetic_time_left">%1$s қалды</string>
+    <string name="test_genetic_best_show">Барлық уақыттағы ең жақсыларды көрсету</string>
+    <string name="test_genetic_best_hide">Ағымдағы ұрпақты көрсету</string>
 </resources>

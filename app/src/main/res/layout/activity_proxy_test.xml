@@ -36,12 +36,39 @@
                 app:strokeWidth="0dp"
                 android:text="@string/test_start" />
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/geneticButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="42dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="8dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:paddingLeft="10pt"
+                android:paddingRight="10pt"
+                android:textAllCaps="true"
+                android:focusable="true"
+                android:visibility="gone"
+                android:text="@string/test_genetic_start" />
+
             <TextView
                 android:id="@+id/progressTextView"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textAlignment="center"
                 android:paddingTop="6dp"/>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/bestToggleButton"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:minHeight="0dp"
+                android:textAllCaps="false"
+                android:visibility="gone"
+                android:text="@string/test_genetic_best_show" />
         </LinearLayout>
 
         <androidx.recyclerview.widget.RecyclerView

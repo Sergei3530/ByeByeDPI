@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.res.ColorStateList
 import android.net.VpnService
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -31,8 +32,10 @@ import io.github.romanvht.byedpi.utility.HistoryUtils
 import io.github.romanvht.byedpi.utility.getPreferences
 import io.github.romanvht.byedpi.utility.mode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 class TestActivity : BaseActivity() {
 
@@ -40,11 +43,16 @@ class TestActivity : BaseActivity() {
     private lateinit var progressTextView: TextView
     private lateinit var disclaimerTextView: TextView
     private lateinit var startStopButton: MaterialButton
+    private lateinit var geneticButton: MaterialButton
+    private lateinit var bestToggleButton: MaterialButton
     private lateinit var strategyAdapter: StrategyResultAdapter
     private lateinit var cmdHistoryUtils: HistoryUtils
 
     private val strategies = mutableListOf<StrategyResult>()
     private var renderedRunId = -1L
+    private var renderedBest = false
+    private var showBest = false
+    private var lastState = TestState()
     private val isTesting: Boolean get() = TestService.isRunning
     private val prefs by lazy { getPreferences() }
 
@@ -57,6 +65,8 @@ class TestActivity : BaseActivity() {
         cmdHistoryUtils = HistoryUtils(this)
         strategiesRecyclerView = findViewById(R.id.strategiesRecyclerView)
         startStopButton = findViewById(R.id.startStopButton)
+        geneticButton = findViewById(R.id.geneticButton)
+        bestToggleButton = findViewById(R.id.bestToggleButton)
         progressTextView = findViewById(R.id.progressTextView)
         disclaimerTextView = findViewById(R.id.disclaimerTextView)
 
@@ -71,6 +81,12 @@ class TestActivity : BaseActivity() {
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    while (true) {
+                        delay(1000)
+                        updateProgressText()
+                    }
+                }
                 TestService.state.collect { state ->
                     renderState(state)
                     if (!state.isLoaded && !state.isRunning) TestService.loadResults(applicationContext)
@@ -84,6 +100,18 @@ class TestActivity : BaseActivity() {
             if (isTesting) TestService.stop() else TestService.start(this)
 
             startStopButton.postDelayed({ startStopButton.isClickable = true }, 1000)
+        }
+
+        geneticButton.setOnClickListener {
+            if (isTesting) return@setOnClickListener
+            geneticButton.isClickable = false
+            TestService.start(this, genetic = true)
+            geneticButton.postDelayed({ geneticButton.isClickable = true }, 1000)
+        }
+
+        bestToggleButton.setOnClickListener {
+            showBest = !showBest
+            renderState(lastState)
         }
 
         startStopButton.setOnFocusChangeListener { _, hasFocus ->
@@ -137,32 +165,47 @@ class TestActivity : BaseActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        renderState(TestService.state.value)
+    }
+
     private fun renderState(state: TestState) {
+        lastState = state
         startStopButton.text = getString(if (state.isRunning) R.string.test_stop else R.string.test_start)
         startStopButton.isEnabled = !state.isStopping
         if (state.isRunning) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        progressTextView.text = when {
-            state.isRunning && state.currentStrategy > 0 -> getString(R.string.test_process, state.currentStrategy, state.strategies.size)
-            state.isRunning -> ""
-            state.failed || state.wasInterrupted -> getString(R.string.test_proxy_error)
-            state.strategies.isNotEmpty() -> getString(R.string.test_complete)
-            else -> ""
-        }
+        val geneticEnabled = prefs.getBoolean("byedpi_proxytest_genetic", false)
+        geneticButton.visibility = if (geneticEnabled && !state.isRunning) View.VISIBLE else View.GONE
+        geneticButton.isEnabled = !state.isStopping
+
+        updateProgressText()
         disclaimerTextView.visibility = if (state.wasInterrupted || (!state.isRunning && state.strategies.isEmpty())) View.VISIBLE else View.GONE
         disclaimerTextView.text = getString(if (state.wasInterrupted) R.string.test_crash else R.string.test_disclaimer)
 
-        strategyAdapter.setTestingState(state.isRunning)
-        val replace = renderedRunId != state.runId || strategies.map { it.command } != state.strategies.map { it.command }
-        val reorder = replace || strategies.indices.any { strategies[it].isCompleted != state.strategies[it].isCompleted }
+        val hasBest = state.isGenetic && state.bestStrategies.isNotEmpty()
+        if (!hasBest) showBest = false
+        bestToggleButton.visibility = if (hasBest) View.VISIBLE else View.GONE
+        bestToggleButton.text = getString(
+            if (showBest) R.string.test_genetic_best_hide else R.string.test_genetic_best_show
+        )
+
+        val displayed = if (hasBest && showBest) state.bestStrategies else state.strategies
+        strategyAdapter.setTestingState(state.isRunning && !showBest)
+        val replace = renderedRunId != state.runId ||
+            renderedBest != showBest ||
+            strategies.map { it.command } != displayed.map { it.command }
+        val reorder = replace || strategies.indices.any { strategies[it].isCompleted != displayed[it].isCompleted }
         if (replace) {
             strategies.clear()
-            strategies.addAll(state.strategies.map { it.copy(siteResults = it.siteResults.toMutableList()) })
+            strategies.addAll(displayed.map { it.copy(siteResults = it.siteResults.toMutableList()) })
             renderedRunId = state.runId
+            renderedBest = showBest
         } else {
             strategies.forEachIndexed { index, strategy ->
-                val value = state.strategies[index]
+                val value = displayed[index]
                 if (strategy.copy(isExpanded = value.isExpanded) != value) {
                     strategy.successCount = value.successCount
                     strategy.totalRequests = value.totalRequests
@@ -175,6 +218,43 @@ class TestActivity : BaseActivity() {
             }
         }
         if (reorder) strategyAdapter.updateStrategies(strategies)
+    }
+
+    private fun updateProgressText() {
+        val state = lastState
+        progressTextView.text = when {
+            state.isRunning && state.isGenetic && state.generation > 0 ->
+                getString(
+                    R.string.test_process_genetic,
+                    state.generation,
+                    state.currentStrategy,
+                    state.strategies.size,
+                ) + remainingSuffix(state)
+
+            state.isRunning && state.currentStrategy > 0 ->
+                getString(R.string.test_process, state.currentStrategy, state.strategies.size)
+
+            state.isRunning -> ""
+            state.failed || state.wasInterrupted -> getString(R.string.test_proxy_error)
+            state.strategies.isNotEmpty() -> getString(R.string.test_complete)
+            else -> ""
+        }
+    }
+
+    private fun remainingSuffix(state: TestState): String {
+        if (!state.isGenetic || !state.isRunning || state.geneticDeadline <= 0) return ""
+        val remaining = state.geneticDeadline - SystemClock.elapsedRealtime()
+        if (remaining <= 0) return ""
+        val totalSeconds = remaining / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        val text = if (hours > 0) {
+            String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format(Locale.US, "%d:%02d", minutes, seconds)
+        }
+        return " · " + getString(R.string.test_genetic_time_left, text)
     }
 
     private fun addToHistory(command: String) {

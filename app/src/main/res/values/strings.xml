@@ -244,4 +244,19 @@
     <string name="file_picker_unavailable">На устройстве отсутствует системный выбор файлов. Для продолжения предоставьте приложению доступ к файлам.</string>
     <string name="grant_access">Предоставить доступ</string>
     <string name="storage_access_not_granted">Доступ к файлам не предоставлен</string>
+    <string name="test_genetic_start">Запустить подбор</string>
+    <string name="test_genetic_settings">Тестирование на основе генетического алгоритма</string>
+    <string name="test_genetic_n">Лучших стратегий за поколение (n)</string>
+    <string name="test_genetic_m">Добавлений параметра на родителя (m)</string>
+    <string name="test_genetic_d">Удалений параметра на родителя (d)</string>
+    <string name="test_genetic_r">Изменений параметра на родителя (r)</string>
+    <string name="test_genetic_minutes">Лимит времени, минут</string>
+    <string name="test_genetic_stop_k">Остановка: стратегий со 100% (K)</string>
+    <string name="test_genetic_best_k">Лучших за всё время (K)</string>
+    <string name="test_genetic_size">Стратегий в поколении</string>
+    <string name="test_genetic_size_summary">%1$d — n × (1 + m + d + r)</string>
+    <string name="test_process_genetic">Поколение %1$d · %2$d/%3$d</string>
+    <string name="test_genetic_time_left">осталось %1$s</string>
+    <string name="test_genetic_best_show">Показать лучшие за всё время</string>
+    <string name="test_genetic_best_hide">Показать текущее поколение</string>
 </resources>

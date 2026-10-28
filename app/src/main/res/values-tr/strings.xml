@@ -244,4 +244,19 @@
     <string name="file_picker_unavailable">Cihazda sistem dosya seçicisi yok. Devam etmek için uygulamaya dosya erişimi verin.</string>
     <string name="grant_access">Erişim ver</string>
     <string name="storage_access_not_granted">Dosya erişimi verilmedi</string>
+    <string name="test_genetic_start">Seçimi başlat</string>
+    <string name="test_genetic_settings">Genetik algoritma tabanlı test</string>
+    <string name="test_genetic_n">Nesil başına en iyi strateji (n)</string>
+    <string name="test_genetic_m">Ebeveyn başına parametre ekleme (m)</string>
+    <string name="test_genetic_d">Ebeveyn başına parametre silme (d)</string>
+    <string name="test_genetic_r">Ebeveyn başına parametre değiştirme (r)</string>
+    <string name="test_genetic_minutes">Zaman sınırı, dakika</string>
+    <string name="test_genetic_stop_k">Durdurma: %100 strateji sayısı (K)</string>
+    <string name="test_genetic_best_k">Tüm zamanların en iyileri (K)</string>
+    <string name="test_genetic_size">Nesildeki strateji sayısı</string>
+    <string name="test_genetic_size_summary">%1$d — n × (1 + m + d + r)</string>
+    <string name="test_process_genetic">Nesil %1$d · %2$d/%3$d</string>
+    <string name="test_genetic_time_left">%1$s kaldı</string>
+    <string name="test_genetic_best_show">Tüm zamanların en iyilerini göster</string>
+    <string name="test_genetic_best_hide">Mevcut nesli göster</string>
 </resources>

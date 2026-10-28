@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.AtomicFile
 import android.util.Log
 import android.widget.Toast
@@ -37,16 +38,27 @@ class TestService : Service() {
         private const val TAG = "TestService"
         private const val CHANNEL = "Proxy test"
         private const val RESULTS_FILE = "proxy_test_results.json"
+        private const val BEST_RESULTS_FILE = "proxy_test_best_results.json"
         private const val NOTIFICATION_ID = 4
         private const val EXTRA_COMMANDS = "test_commands"
         private const val EXTRA_APPEND_RESULTS = "test_append_results"
+        private const val EXTRA_GENETIC = "test_genetic"
         private val mutableState = MutableStateFlow(TestState())
         private val resultsLock = Any()
         val state: StateFlow<TestState> = mutableState.asStateFlow()
         val isRunning: Boolean
             get() = state.value.isRunning
 
-        fun start(context: Context, commands: List<String>? = null, appendResults: Boolean = false) {
+        private val RESULT_ORDER = compareByDescending<StrategyResult> { it.successPercentage }
+            .thenByDescending { it.successCount }
+            .thenByDescending { it.totalRequests }
+
+        fun start(
+            context: Context,
+            commands: List<String>? = null,
+            appendResults: Boolean = false,
+            genetic: Boolean = false,
+        ) {
             if (isRunning) return
             ServiceManager.refresh(context)
             val previous = state.value
@@ -57,6 +69,10 @@ class TestService : Service() {
                 currentStrategy = 0,
                 failed = false,
                 wasInterrupted = false,
+                isGenetic = genetic,
+                generation = 0,
+                generationSize = 0,
+                geneticDeadline = 0L,
             )
             try {
                 val intent = Intent(context, TestService::class.java).setAction(START_ACTION)
@@ -65,6 +81,9 @@ class TestService : Service() {
                 }
                 if (appendResults) {
                     intent.putExtra(EXTRA_APPEND_RESULTS, true)
+                }
+                if (genetic) {
+                    intent.putExtra(EXTRA_GENETIC, true)
                 }
                 ContextCompat.startForegroundService(context, intent)
             } catch (e: Exception) {
@@ -87,19 +106,12 @@ class TestService : Service() {
             if (previous.isLoaded || previous.isRunning) return
             val app = context.applicationContext
             val loaded = withContext(Dispatchers.IO) {
-                val results = try {
-                    synchronized(resultsLock) {
-                        AtomicFile(File(app.filesDir, RESULTS_FILE)).openRead().bufferedReader().use { reader ->
-                            val type = object : TypeToken<List<StrategyResult>>() {}.type
-                            Gson().fromJson<List<StrategyResult>>(reader, type) ?: emptyList()
-                        }
-                    }
-                } catch (_: Exception) {
-                    emptyList()
-                }
+                val results = readResults(app, RESULTS_FILE)
+                val best = readResults(app, BEST_RESULTS_FILE)
                 previous.copy(
                     isLoaded = true,
                     strategies = results,
+                    bestStrategies = best,
                     wasInterrupted = app.getPreferences().getBoolean("is_test_running", false),
                 )
             }
@@ -109,6 +121,29 @@ class TestService : Service() {
                 }
             }
         }
+
+        private fun readResults(context: Context, fileName: String): List<StrategyResult> {
+            return try {
+                synchronized(resultsLock) {
+                    AtomicFile(File(context.filesDir, fileName)).openRead().bufferedReader().use { reader ->
+                        val type = object : TypeToken<List<StrategyResult>>() {}.type
+                        Gson().fromJson<List<StrategyResult>>(reader, type) ?: emptyList()
+                    }
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
+
+    private class TestRun {
+        var settings: TestSettings? = null
+        var currentStrategy: StrategyResult? = null
+        var prepared = false
+        var failed = false
+        var genetic = false
+        val tested = mutableListOf<StrategyResult>()
+        var lastGeneration: List<StrategyResult> = emptyList()
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -120,6 +155,7 @@ class TestService : Service() {
     private var destroyed = false
     private var notifiedStrategy = -1
     private var notifiedCompleted = -1
+    private var notifiedGeneration = -1
     private var carriedStrategies: List<StrategyResult> = emptyList()
 
     override fun onCreate() {
@@ -143,6 +179,7 @@ class TestService : Service() {
                         startTesting(
                             intent?.getStringArrayListExtra(EXTRA_COMMANDS),
                             intent?.getBooleanExtra(EXTRA_APPEND_RESULTS, false) == true,
+                            intent?.getBooleanExtra(EXTRA_GENETIC, false) == true,
                         )
                     }
                 } catch (e: Exception) {
@@ -171,16 +208,12 @@ class TestService : Service() {
         super.onDestroy()
     }
 
-    private fun startTesting(commands: List<String>?, appendResults: Boolean) {
+    private fun startTesting(commands: List<String>?, appendResults: Boolean, genetic: Boolean) {
         val previous = state.value.copy(isRunning = false, isStopping = false)
         carriedStrategies = emptyList()
+        val run = TestRun().apply { this.genetic = genetic }
         testJob = scope.launch(start = CoroutineStart.LAZY) {
             val testingJob = coroutineContext.job
-            var settings: TestSettings? = null
-            var currentStrategy: StrategyResult? = null
-            var prepared = false
-            var failed = false
-            val strategies = mutableListOf<StrategyResult>()
             val stopWatcher = launch {
                 try {
                     state.first { it.isStopping }
@@ -195,63 +228,59 @@ class TestService : Service() {
                     throw CancellationException("Proxy test stopped")
                 }
                 val options = withContext(Dispatchers.IO) { loadSettings(commands) }
-                settings = options
+                run.settings = options
                 if (options.sites.isEmpty()) {
                     Toast.makeText(this@TestService, R.string.test_settings_domain_empty, Toast.LENGTH_LONG).show()
                     return@launch
                 }
-                strategies.addAll(options.commands.map { StrategyResult(command = it) })
-                if (appendResults) {
-                    carriedStrategies = previous.strategies.filter { it.command !in options.commands }
-                }
-                prepared = true
+                run.prepared = true
                 getPreferences().edit(commit = true) { putBoolean("is_test_running", true) }
-                publish(strategies, 0)
-                ServiceManager.waitStop()
-                val configurations = withContext(Dispatchers.IO) {
-                    options.commands.map { command ->
-                        runCatching { testConfiguration(this@TestService, command, options.host, options.port) }
-                    }
-                }
 
-                for ((index, strategy) in strategies.withIndex()) {
-                    ensureActive()
-                    currentStrategy = strategy
-                    strategy.totalRequests = options.sites.size * options.requestsCount
-                    publish(strategies, index + 1)
-                    val configuration = configurations[index].getOrNull()
-                    if (configuration == null || !checkStrategy(strategy, strategies, configuration, options)) {
-                        resetStrategyResult(strategy, options)
-                    }
-                    strategy.isCompleted = true
-                    publish(strategies)
-                    saveResults(strategies + carriedStrategies)
-                    stopEngine()
-                    currentStrategy = null
-                    delay(options.delaySec * 500L)
+                if (genetic) {
+                    runGenetic(run, options)
+                } else {
+                    runSingle(run, options, appendResults)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to run proxy tests", e)
-                failed = true
+                run.failed = true
             } finally {
                 stopWatcher.cancel()
                 withContext(NonCancellable) {
                     mutableState.value = state.value.copy(isStopping = true)
-                    settings?.let { options ->
-                        currentStrategy?.takeIf { !it.isCompleted }?.let {
+                    run.settings?.let { options ->
+                        run.currentStrategy?.takeIf { !it.isCompleted }?.let {
                             resetStrategyResult(it, options)
                             it.isCompleted = true
                         }
                     }
                     stopEngine()
-                    if (prepared) {
-                        try {
-                            saveResults(strategies + carriedStrategies)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to save proxy test results", e)
-                            failed = true
+                    if (run.prepared) {
+                        if (run.tested.isEmpty() || run.tested.any { it.isCompleted }) {
+                            try {
+                                saveResults(run.tested + carriedStrategies)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to save proxy test results", e)
+                                run.failed = true
+                            }
+                        }
+                        if (genetic) {
+                            val completed = run.lastGeneration.filter { it.isCompleted }
+                            if (completed.isNotEmpty()) {
+                                val config = loadGeneticSettings()
+                                val merged = mergeBest(state.value.bestStrategies, completed, config.bestCount)
+                                if (merged.isNotEmpty()) {
+                                    try {
+                                        saveBest(merged)
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Failed to save best strategies", e)
+                                    }
+                                    mutableState.value = state.value.copy(bestStrategies = merged)
+                                }
+                                saveGeneticPopulation(completed.sortedWith(RESULT_ORDER))
+                            }
                         }
                         getPreferences().edit(commit = true) { putBoolean("is_test_running", false) }
                     }
@@ -259,21 +288,160 @@ class TestService : Service() {
                     @Suppress("DEPRECATION")
                     stopForeground(true)
                     stopSelfResult(lastStartId)
-                    val results = if (prepared) snapshot(strategies + carriedStrategies) else emptyList()
+                    val results = snapshot(
+                        if (run.prepared) run.tested + carriedStrategies else emptyList()
+                    )
                     carriedStrategies = emptyList()
-                    mutableState.value = if (prepared) TestState(
+                    mutableState.value = if (run.prepared) TestState(
                         runId = previous.runId,
                         isLoaded = true,
                         strategies = results,
-                        failed = failed,
-                    ) else previous.copy(failed = failed, carriedStrategies = emptyList())
+                        failed = run.failed,
+                        wasInterrupted = state.value.wasInterrupted,
+                        isGenetic = genetic,
+                        generation = state.value.generation,
+                        generationSize = state.value.generationSize,
+                        bestStrategies = state.value.bestStrategies,
+                    ) else previous.copy(failed = run.failed, carriedStrategies = emptyList())
                 }
             }
         }
         testJob?.start()
     }
 
+    private suspend fun runSingle(run: TestRun, options: TestSettings, appendResults: Boolean) {
+        val strategies = options.commands.map { StrategyResult(command = it) }.toMutableList()
+        run.tested.addAll(strategies)
+        run.lastGeneration = strategies
+        if (appendResults) {
+            carriedStrategies = state.value.strategies.filter { it.command !in options.commands }
+        }
+        publish(run, strategies, 0)
+        ServiceManager.waitStop()
+        val configurations = withContext(Dispatchers.IO) {
+            options.commands.map { command ->
+                runCatching { testConfiguration(this@TestService, command, options.host, options.port) }
+            }
+        }
+
+        for ((index, strategy) in strategies.withIndex()) {
+            currentCoroutineContext().ensureActive()
+            run.currentStrategy = strategy
+            strategy.totalRequests = options.sites.size * options.requestsCount
+            publish(run, strategies, index + 1)
+            val configuration = configurations[index].getOrNull()
+            if (configuration == null || !checkStrategy(run, strategy, strategies, configuration, options)) {
+                resetStrategyResult(strategy, options)
+            }
+            strategy.isCompleted = true
+            publish(run, strategies)
+            saveResults(strategies + carriedStrategies)
+            stopEngine()
+            run.currentStrategy = null
+            delay(options.delaySec * 500L)
+        }
+    }
+
+    private suspend fun runGenetic(run: TestRun, options: TestSettings) {
+        val config = loadGeneticSettings()
+        val startedAt = SystemClock.elapsedRealtime()
+        val deadline = if (config.timeLimitMinutes > 0) {
+            startedAt + config.timeLimitMinutes * 60_000L
+        } else {
+            0L
+        }
+        mutableState.value = state.value.copy(
+            isGenetic = true,
+            generation = 0,
+            generationSize = 0,
+            geneticDeadline = deadline,
+        )
+
+        val storedBest = state.value.bestStrategies.ifEmpty {
+            withContext(Dispatchers.IO) { readResults(applicationContext, BEST_RESULTS_FILE) }
+        }
+        var best = mergeBest(storedBest, emptyList(), config.bestCount)
+        mutableState.value = state.value.copy(bestStrategies = best)
+
+        var generationCommands = options.commands
+        var generation = 0
+
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            if (generation > 0 && deadline > 0 && SystemClock.elapsedRealtime() >= deadline) break
+            generation++
+            val strategies = generationCommands.map { StrategyResult(command = it) }.toMutableList()
+            run.tested.clear()
+            run.tested.addAll(strategies)
+            run.lastGeneration = strategies
+            publish(run, strategies, 0, generation)
+            ServiceManager.waitStop()
+
+            val configurations = withContext(Dispatchers.IO) {
+                strategies.map { strategy ->
+                    runCatching { testConfiguration(this@TestService, strategy.command, options.host, options.port) }
+                }
+            }
+
+            var stopped = false
+            for ((index, strategy) in strategies.withIndex()) {
+                currentCoroutineContext().ensureActive()
+                if (deadline > 0 && SystemClock.elapsedRealtime() >= deadline) {
+                    stopped = true
+                    break
+                }
+                run.currentStrategy = strategy
+                strategy.totalRequests = options.sites.size * options.requestsCount
+                publish(run, strategies, index + 1, generation)
+                val configuration = configurations[index].getOrNull()
+                if (configuration == null || !checkStrategy(run, strategy, strategies, configuration, options)) {
+                    resetStrategyResult(strategy, options)
+                }
+                strategy.isCompleted = true
+                publish(run, strategies, index + 1, generation)
+                saveResults(strategies)
+                stopEngine()
+                run.currentStrategy = null
+                delay(options.delaySec * 500L)
+
+                if (countFull(strategies) >= config.stopAtFull) {
+                    stopped = true
+                    break
+                }
+            }
+
+            best = mergeBest(best, strategies.filter { it.isCompleted }, config.bestCount)
+            if (best.isNotEmpty()) saveBest(best)
+            mutableState.value = state.value.copy(
+                bestStrategies = best,
+                generationSize = strategies.size,
+            )
+
+            if (stopped) break
+            if (deadline > 0 && SystemClock.elapsedRealtime() >= deadline) break
+
+            val parents = strategies
+                .filter { it.isCompleted }
+                .sortedWith(RESULT_ORDER)
+                .take(config.parents)
+                .map { it.command }
+            if (parents.isEmpty()) break
+
+            val next = GeneticEngine.nextGeneration(
+                parents = parents,
+                additions = config.additions,
+                deletions = config.deletions,
+                changes = config.changes,
+            )
+            if (next.isEmpty()) break
+            generationCommands = next
+        }
+
+        publish(run, run.lastGeneration.toList(), run.lastGeneration.size, generation)
+    }
+
     private suspend fun checkStrategy(
+        run: TestRun,
         strategy: StrategyResult,
         strategies: List<StrategyResult>,
         configuration: Configuration,
@@ -301,7 +469,7 @@ class TestService : Service() {
                                 strategy.currentProgress += countRequests
                                 strategy.successCount += successCount
                                 strategy.siteResults.add(SiteResult(site, successCount, countRequests))
-                                publish(strategies)
+                                publish(run, strategies)
                             }
                         }
                     )
@@ -374,6 +542,19 @@ class TestService : Service() {
             delaySec, requestsCount, requestTimeout, requestLimit)
     }
 
+    private fun loadGeneticSettings(): GeneticSettings {
+        val prefs = getPreferences()
+        return GeneticSettings(
+            parents = prefs.getIntStringNotNull("byedpi_proxytest_gen_n", 5).coerceIn(1, 500),
+            additions = prefs.getIntStringNotNull("byedpi_proxytest_gen_m", 3).coerceIn(0, 500),
+            deletions = prefs.getIntStringNotNull("byedpi_proxytest_gen_d", 1).coerceIn(0, 500),
+            changes = prefs.getIntStringNotNull("byedpi_proxytest_gen_r", 2).coerceIn(0, 500),
+            timeLimitMinutes = prefs.getIntStringNotNull("byedpi_proxytest_gen_minutes", 120).coerceIn(0, 525600),
+            stopAtFull = prefs.getIntStringNotNull("byedpi_proxytest_gen_stop_k", 3).coerceIn(1, 10000),
+            bestCount = prefs.getIntStringNotNull("byedpi_proxytest_gen_best_k", 10).coerceIn(1, 10000),
+        )
+    }
+
     private fun resetStrategyResult(strategy: StrategyResult, settings: TestSettings) {
         strategy.successCount = 0
         strategy.currentProgress = 0
@@ -385,10 +566,18 @@ class TestService : Service() {
         strategies.map { it.copy(siteResults = it.siteResults.toMutableList()) }
 
     private suspend fun saveResults(strategies: List<StrategyResult>) {
+        saveResultsToFile(strategies, RESULTS_FILE)
+    }
+
+    private suspend fun saveBest(strategies: List<StrategyResult>) {
+        saveResultsToFile(strategies, BEST_RESULTS_FILE)
+    }
+
+    private suspend fun saveResultsToFile(strategies: List<StrategyResult>, fileName: String) {
         val results = snapshot(strategies)
         withContext(Dispatchers.IO) {
             synchronized(resultsLock) {
-                val file = AtomicFile(File(filesDir, RESULTS_FILE))
+                val file = AtomicFile(File(filesDir, fileName))
                 val output = file.startWrite()
                 try {
                     output.write(gson.toJson(results).toByteArray(Charsets.UTF_8))
@@ -401,27 +590,76 @@ class TestService : Service() {
         }
     }
 
-    private fun publish(strategies: List<StrategyResult>, currentStrategy: Int = state.value.currentStrategy) {
+    private fun saveGeneticPopulation(strategies: List<StrategyResult>) {
+        if (strategies.isEmpty()) return
+        val commands = strategies.joinToString("\n") { it.command }
+        getPreferences().edit(commit = true) {
+            putString("byedpi_proxytest_commands", commands)
+            putBoolean("byedpi_proxytest_usercommands", true)
+        }
+    }
+
+    private fun mergeBest(
+        existing: List<StrategyResult>,
+        tested: List<StrategyResult>,
+        limit: Int,
+    ): List<StrategyResult> {
+        val merged = LinkedHashMap<String, StrategyResult>()
+        (existing + tested).forEach { candidate ->
+            val current = merged[candidate.command]
+            if (current == null || RESULT_ORDER.compare(candidate, current) < 0) {
+                merged[candidate.command] = candidate
+            }
+        }
+        return merged.values
+            .sortedWith(RESULT_ORDER)
+            .take(limit)
+            .map { it.copy(siteResults = it.siteResults.toMutableList()) }
+    }
+
+    private fun countFull(strategies: List<StrategyResult>): Int =
+        strategies.count { it.isCompleted && it.totalRequests > 0 && it.successCount >= it.totalRequests }
+
+    private fun publish(
+        run: TestRun,
+        strategies: List<StrategyResult>,
+        currentStrategy: Int = state.value.currentStrategy,
+        generation: Int = state.value.generation,
+    ) {
         mutableState.value = state.value.copy(
             isLoaded = true,
             strategies = snapshot(strategies),
             carriedStrategies = carriedStrategies,
             currentStrategy = currentStrategy,
+            generation = generation,
+            generationSize = strategies.size,
+            isGenetic = run.genetic,
         )
         val completed = strategies.count { it.isCompleted }
-        if (!destroyed && (notifiedStrategy != currentStrategy || notifiedCompleted != completed)) {
+        if (!destroyed && (
+            notifiedStrategy != currentStrategy ||
+                notifiedCompleted != completed ||
+                notifiedGeneration != generation
+            )
+        ) {
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, notification())
             notifiedStrategy = currentStrategy
             notifiedCompleted = completed
+            notifiedGeneration = generation
         }
     }
 
     private fun notification(): Notification {
         val value = state.value
+        val text = if (value.isGenetic) {
+            getString(R.string.test_process_genetic, value.generation, value.currentStrategy, value.strategies.size)
+        } else {
+            getString(R.string.test_process, value.currentStrategy, value.strategies.size)
+        }
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.title_test))
-            .setContentText(getString(R.string.test_process, value.currentStrategy, value.strategies.size))
+            .setContentText(text)
             .setProgress(value.strategies.size, value.strategies.count { it.isCompleted }, value.currentStrategy == 0)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -440,5 +678,6 @@ class TestService : Service() {
         }
         notifiedStrategy = state.value.currentStrategy
         notifiedCompleted = state.value.strategies.count { it.isCompleted }
+        notifiedGeneration = state.value.generation
     }
 }

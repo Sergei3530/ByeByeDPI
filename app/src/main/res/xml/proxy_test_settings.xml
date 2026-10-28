@@ -62,4 +62,71 @@
         app:useSimpleSummaryProvider="true"
         app:iconSpaceReserved="false" />
 
+    <SwitchPreference
+        android:key="byedpi_proxytest_genetic"
+        android:title="@string/test_genetic_settings"
+        app:iconSpaceReserved="false" />
+
+    <EditTextPreference
+        android:key="byedpi_proxytest_gen_n"
+        android:title="@string/test_genetic_n"
+        android:inputType="number"
+        android:defaultValue="5"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
+    <EditTextPreference
+        android:key="byedpi_proxytest_gen_m"
+        android:title="@string/test_genetic_m"
+        android:inputType="number"
+        android:defaultValue="3"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
+    <EditTextPreference
+        android:key="byedpi_proxytest_gen_d"
+        android:title="@string/test_genetic_d"
+        android:inputType="number"
+        android:defaultValue="1"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
+    <EditTextPreference
+        android:key="byedpi_proxytest_gen_r"
+        android:title="@string/test_genetic_r"
+        android:inputType="number"
+        android:defaultValue="2"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
+    <EditTextPreference
+        android:key="byedpi_proxytest_gen_minutes"
+        android:title="@string/test_genetic_minutes"
+        android:inputType="number"
+        android:defaultValue="120"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
+    <EditTextPreference
+        android:key="byedpi_proxytest_gen_stop_k"
+        android:title="@string/test_genetic_stop_k"
+        android:inputType="number"
+        android:defaultValue="3"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
+    <EditTextPreference
+        android:key="byedpi_proxytest_gen_best_k"
+        android:title="@string/test_genetic_best_k"
+        android:inputType="number"
+        android:defaultValue="10"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
+    <Preference
+        android:key="byedpi_proxytest_gen_size"
+        android:title="@string/test_genetic_size"
+        android:selectable="false"
+        app:iconSpaceReserved="false" />
+
 </PreferenceScreen>
