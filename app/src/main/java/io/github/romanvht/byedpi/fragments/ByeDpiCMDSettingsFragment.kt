@@ -103,7 +103,7 @@ class ByeDpiCMDSettingsFragment : PreferenceFragmentCompat() {
     }
 
     private fun updateTestState(state: TestState) {
-        val results = state.strategies.associateBy { it.command }
+        val results = (state.carriedStrategies + state.strategies).associateBy { it.command }
 
         testPreferences.forEach { (command, preference) ->
             val result = results[command]
@@ -219,7 +219,9 @@ class ByeDpiCMDSettingsFragment : PreferenceFragmentCompat() {
     }
 
     private fun bindTestState(itemView: View, command: Command) {
-        val strategy = TestService.state.value.strategies.find { it.command == command.text }
+        val state = TestService.state.value
+        val strategy = state.strategies.find { it.command == command.text }
+            ?: state.carriedStrategies.find { it.command == command.text }
 
         val progressLayout = itemView.findViewById<View>(R.id.test_progress_layout)
         val detailsButton = itemView.findViewById<View>(R.id.test_details_button)
@@ -316,7 +318,7 @@ class ByeDpiCMDSettingsFragment : PreferenceFragmentCompat() {
             .setTitle(getString(R.string.cmd_history_menu))
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> testCommands(listOf(command.text))
+                    0 -> testCommands(listOf(command.text), appendResults = true)
                     1 -> applyCommand(command.text)
                     2 -> if (command.pinned) unpinCommand(command.text) else pinCommand(command.text)
                     3 -> showRenameDialog(command)
@@ -333,13 +335,13 @@ class ByeDpiCMDSettingsFragment : PreferenceFragmentCompat() {
         if (commands.isNotEmpty()) testCommands(commands)
     }
 
-    private fun testCommands(commands: List<String>) {
+    private fun testCommands(commands: List<String>, appendResults: Boolean = false) {
         if (TestService.isRunning) {
             Toast.makeText(requireContext(), R.string.test_unavailable, Toast.LENGTH_SHORT).show()
             return
         }
 
-        TestService.start(requireContext(), commands)
+        TestService.start(requireContext(), commands, appendResults)
     }
 
     private fun showRenameDialog(command: Command) {
