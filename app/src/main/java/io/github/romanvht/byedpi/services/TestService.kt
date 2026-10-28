@@ -38,13 +38,14 @@ class TestService : Service() {
         private const val CHANNEL = "Proxy test"
         private const val RESULTS_FILE = "proxy_test_results.json"
         private const val NOTIFICATION_ID = 4
+        private const val EXTRA_COMMANDS = "test_commands"
         private val mutableState = MutableStateFlow(TestState())
         private val resultsLock = Any()
         val state: StateFlow<TestState> = mutableState.asStateFlow()
         val isRunning: Boolean
             get() = state.value.isRunning
 
-        fun start(context: Context) {
+        fun start(context: Context, commands: List<String>? = null) {
             if (isRunning) return
             ServiceManager.refresh(context)
             val previous = state.value
@@ -57,7 +58,11 @@ class TestService : Service() {
                 wasInterrupted = false,
             )
             try {
-                ContextCompat.startForegroundService(context, Intent(context, TestService::class.java).setAction(START_ACTION))
+                val intent = Intent(context, TestService::class.java).setAction(START_ACTION)
+                if (commands != null) {
+                    intent.putStringArrayListExtra(EXTRA_COMMANDS, ArrayList(commands))
+                }
+                ContextCompat.startForegroundService(context, intent)
             } catch (e: Exception) {
                 mutableState.value = previous.copy(failed = true)
                 Log.e(TAG, "Failed to start proxy tests", e)
@@ -130,7 +135,7 @@ class TestService : Service() {
                         stopForeground(true)
                         stopSelfResult(startId)
                     } else if (testJob == null) {
-                        startTesting()
+                        startTesting(intent?.getStringArrayListExtra(EXTRA_COMMANDS))
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to show proxy test notification", e)
@@ -158,7 +163,7 @@ class TestService : Service() {
         super.onDestroy()
     }
 
-    private fun startTesting() {
+    private fun startTesting(commands: List<String>?) {
         val previous = state.value.copy(isRunning = false, isStopping = false)
         testJob = scope.launch(start = CoroutineStart.LAZY) {
             val testingJob = coroutineContext.job
@@ -180,7 +185,7 @@ class TestService : Service() {
                 if (state.value.isStopping) {
                     throw CancellationException("Proxy test stopped")
                 }
-                val options = withContext(Dispatchers.IO) { loadSettings() }
+                val options = withContext(Dispatchers.IO) { loadSettings(commands) }
                 settings = options
                 if (options.sites.isEmpty()) {
                     Toast.makeText(this@TestService, R.string.test_settings_domain_empty, Toast.LENGTH_LONG).show()
@@ -333,12 +338,16 @@ class TestService : Service() {
         }
     }
 
-    private fun loadSettings(): TestSettings {
+    private fun loadSettings(testCommands: List<String>?): TestSettings {
         val prefs = getPreferences()
-        val userCommands = prefs.getBoolean("byedpi_proxytest_usercommands", false)
         val sniValue = prefs.getStringNotNull("byedpi_proxytest_sni", "google.com")
-        val content = if (userCommands) prefs.getStringNotNull("byedpi_proxytest_commands", "")
-        else assets.open("proxytest_strategies.list").bufferedReader().use { it.readText() }
+        val content = if (testCommands != null) {
+            testCommands.joinToString("\n")
+        } else {
+            val userCommands = prefs.getBoolean("byedpi_proxytest_usercommands", false)
+            if (userCommands) prefs.getStringNotNull("byedpi_proxytest_commands", "")
+            else assets.open("proxytest_strategies.list").bufferedReader().use { it.readText() }
+        }
         val commands = content.replace("{sni}", "\"${sniValue}\"").lines().map { it.trim() }.filter { it.isNotEmpty() }
         val host = prefs.getStringNotNull("byedpi_proxy_ip", "127.0.0.1")
         val port = prefs.getIntStringNotNull("byedpi_proxy_port", 1080)
