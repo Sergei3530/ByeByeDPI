@@ -27,8 +27,11 @@ jobs:
 
       - name: Install Android SDK packages
         run: |
-          yes | sdkmanager --licenses > /dev/null
-          sdkmanager --install "cmake;3.22.1" "ndk;27.0.12077973"
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          echo "Using $SDKMANAGER"
+          set +o pipefail
+          yes | "$SDKMANAGER" --licenses > /dev/null
+          "$SDKMANAGER" --install "cmake;3.22.1" "ndk;27.0.12077973"
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
